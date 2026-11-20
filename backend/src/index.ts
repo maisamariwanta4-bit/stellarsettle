@@ -14,7 +14,9 @@ import { scValToNative, rpc, xdr } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import { EventMonitor } from "./eventMonitor.js";
 import { createCheckpointStore } from "./scanCheckpoint.js";
+import { migrateDatabase } from "./migrate.js";
 import { monitorConfig } from "./monitorConfig.js";
+import { isAllowedWebOrigin, webOriginsSchema } from "./webOrigins.js";
 import { inc, observeRequestDuration, renderMetrics } from "./metrics.js";
 import { globalAgent as httpAgent } from "node:http";
 import { globalAgent as httpsAgent } from "node:https";
@@ -53,7 +55,7 @@ const envSchema = z.object({
   POLL_INTERVAL_MS: z.coerce.number().int().min(1000).default(5000),
   DATABASE_PATH: z.string().default("./data/stellarsettle.sqlite"),
   METADATA_API_KEY: z.string().default(""),
-  WEB_ORIGIN: z.string().url().default("http://localhost:5173"),
+  WEB_ORIGIN: webOriginsSchema,
   // Issue #65: rate-limit env vars
   RATE_LIMIT_READ_MAX: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_WRITE_MAX: z.coerce.number().int().positive().default(30),
@@ -68,25 +70,8 @@ if (databasePath !== ":memory:") {
 }
 
 export function initDatabase(db: DatabaseSync): void {
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS contract_events (
-      id TEXT PRIMARY KEY,
-      ledger INTEGER NOT NULL,
-      event_type TEXT NOT NULL,
-      shipment_id TEXT,
-      payload TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE INDEX IF NOT EXISTS contract_events_ledger_idx ON contract_events(ledger DESC);
-    CREATE TABLE IF NOT EXISTS shipment_metadata (
-      shipment_id TEXT NOT NULL,
-      metadata_key TEXT NOT NULL,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (shipment_id, metadata_key)
-    );
-  `);
+  db.exec("PRAGMA journal_mode = WAL");
+  migrateDatabase(db);
 }
 
 export const database = new DatabaseSync(databasePath);
@@ -569,11 +554,14 @@ app.get<{ Querystring: { types?: string } }>("/v1/api/stream", async (request, r
 
   reply.hijack();
   const response = reply.raw;
+  const requestOrigin = request.headers.origin;
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache, no-transform",
     connection: "keep-alive",
-    "access-control-allow-origin": config.WEB_ORIGIN,
+    ...(isAllowedWebOrigin(requestOrigin, config.WEB_ORIGIN)
+      ? { "access-control-allow-origin": requestOrigin }
+      : {}),
   });
   response.write(": connected\n\n");
   const writeEvent = (event: ContractEvent) =>

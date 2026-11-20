@@ -59,20 +59,22 @@ To recover a reported gap, use an RPC provider that still retains the required r
 
 ## Database migrations
 
-Schema changes live in `migrations/` as `NNN_name.up.sql` / `NNN_name.down.sql` pairs. Applied migrations are tracked in the `schema_migrations` table of the database at `DATABASE_PATH`.
+The backend runs all pending schema migrations automatically at startup. Schema changes live in `migrations/` as `NNN_name.up.sql` / `NNN_name.down.sql` pairs. Applied migrations are tracked in the `schema_migrations` table of the database at `DATABASE_PATH`; the initial migration also adopts existing tables without deleting their data.
 
 ```sh
 npm run db:migrate    # apply all pending migrations
 npm run db:rollback   # revert the most recently applied migration
 ```
 
-To add a migration, create the next-numbered `.up.sql` and matching `.down.sql` file.
+To add a migration, create the next-numbered `.up.sql` and matching `.down.sql` file in `migrations/`. Put the forward schema change in `.up.sql` and its rollback in `.down.sql`; the next application startup will apply it. Run `npm run db:migrate` to apply pending migrations manually or `npm run db:rollback` to roll back the latest one.
 
 ## API Endpoints
 
 All API routes are versioned under `/v1` (e.g. `GET /v1/api/health`). Contract state reads are cached in memory for `CONTRACT_CACHE_TTL_MS` (default `5000`).
 
 ## Environment variables
+
+- **`WEB_ORIGIN`** — A single browser origin or a comma-separated list of origins allowed by CORS (default: `http://localhost:5173`).
 
 - **GET /v1/api/health** — Check service status, network, and event monitor state
 - **GET /v1/api/events** — Retrieve paginated `dispute_escalated`, `shipment_completed`, and `shipment_cancelled` events (query params: `after` ledger, `limit` max 100, optional `type` and `shipmentId`)
